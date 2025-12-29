@@ -909,8 +909,6 @@ class RenderContext {
   }
 
   setCanvasSize(width: number, height: number) {
-    console.log(`setting canvas size to ${width} and ${height}`)
-
     this.canvasSize = [width, height]
   }
 
@@ -974,11 +972,12 @@ class RenderContext {
   resizeCanvas() {
     const [width, height] = this.canvasSize
 
-    const needResize = canvas.width !== width || canvas.height !== height
+    const needResize =
+      this._canvas.width !== width || this._canvas.height !== height
 
     if (needResize) {
-      canvas.width = width
-      canvas.height = height
+      this._canvas.width = width
+      this._canvas.height = height
     }
   }
 
@@ -2644,108 +2643,114 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
   }
 }
 
-const canvasId = 'wgl2'
-const canvas = document.getElementById(canvasId) as HTMLCanvasElement
+try {
+  const canvasId = 'wgl2'
+  const canvas = document.getElementById(canvasId) as HTMLCanvasElement
 
-let initialX = 0
-let initialY = 0
-let movementX = 0
-let movementY = 0
-let initialGrab = false
-let grabbed = false
+  let initialX = 0
+  let initialY = 0
+  let movementX = 0
+  let movementY = 0
+  let initialGrab = false
+  let grabbed = false
 
-canvas.addEventListener('mouseenter', (_) => {
-  document.body.style.cursor = 'grab'
-})
-
-canvas.addEventListener('mouseleave', (_) => {
-  document.body.style.cursor = 'default'
-  grabbed = false
-  initialX = 0
-  initialY = 0
-  movementX = 0
-  movementY = 0
-})
-
-canvas.addEventListener('mousedown', (e) => {
-  document.body.style.cursor = 'grabbing'
-
-  initialGrab = true
-  grabbed = true
-  initialX = e.offsetX
-  initialY = e.offsetY
-})
-
-canvas.addEventListener('click', (_) => {
-  initialGrab = true
-})
-
-canvas.addEventListener('mouseup', (_) => {
-  document.body.style.cursor = 'grab'
-  initialGrab = false
-  grabbed = false
-  initialX = 0
-  initialY = 0
-  movementX = 0
-  movementY = 0
-})
-
-canvas.addEventListener('mousemove', (e) => {
-  if (grabbed) {
-    initialGrab = false
-    movementX = e.offsetX - initialX
-    movementY = e.offsetY - initialY
-  }
-})
-
-if (!canvas) throw new Error(`Failed to get canvas element by '${canvasId}' id`)
-
-const ctx = await RenderContext.create(canvas)
-
-ctx.gl.enable(ctx.gl.CULL_FACE)
-ctx.gl.enable(ctx.gl.DEPTH_TEST)
-
-const ui = new SimpleUI('ui-controls')
-let sceneIdx = 0
-const scenes: Scene[] = [
-  new SingleFLetter3DScene(ctx) as Scene,
-  new FlatFLetterScene(ctx) as Scene,
-  new CircledFLetter3DScene(ctx) as Scene,
-  new RandomRectanglesScene(ctx) as Scene,
-]
-
-ui.mount({
-  type: 'dropdown',
-  id: 'scene-selection',
-  label: 'Choose Scene',
-  persist: true,
-  options: scenes.map<{ name: string; value: string }>((scene, idx) => ({
-    name: scene.name,
-    value: idx.toString(),
-  })),
-  onInput: (value) => {
-    scenes[sceneIdx]?.clearUi(ui)
-    sceneIdx = Number.parseInt(value)
-    scenes[sceneIdx]?.setup(ui)
-  },
-})
-
-scenes[sceneIdx]?.setup(ui)
-
-let then = 0
-function draw(now: number) {
-  ctx.resizeCanvas()
-
-  scenes[sceneIdx]?.update({
-    mouse: { initialGrab, grabbed, movementX, movementY },
+  canvas.addEventListener('mouseenter', (_) => {
+    document.body.style.cursor = 'grab'
   })
 
-  now *= 0.001
-  scenes[sceneIdx]?.render(now - then)
+  canvas.addEventListener('mouseleave', (_) => {
+    document.body.style.cursor = 'default'
+    grabbed = false
+    initialX = 0
+    initialY = 0
+    movementX = 0
+    movementY = 0
+  })
 
-  then = now
+  canvas.addEventListener('mousedown', (e) => {
+    document.body.style.cursor = 'grabbing'
 
-  requestAnimationFrame(draw)
+    initialGrab = true
+    grabbed = true
+    initialX = e.offsetX
+    initialY = e.offsetY
+  })
+
+  canvas.addEventListener('click', (_) => {
+    initialGrab = true
+  })
+
+  canvas.addEventListener('mouseup', (_) => {
+    document.body.style.cursor = 'grab'
+    initialGrab = false
+    grabbed = false
+    initialX = 0
+    initialY = 0
+    movementX = 0
+    movementY = 0
+  })
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (grabbed) {
+      initialGrab = false
+      movementX = e.offsetX - initialX
+      movementY = e.offsetY - initialY
+    }
+  })
+
+  if (!canvas)
+    throw new Error(`Failed to get canvas element by '${canvasId}' id`)
+
+  const ctx = await RenderContext.create(canvas)
+
+  ctx.gl.enable(ctx.gl.CULL_FACE)
+  ctx.gl.enable(ctx.gl.DEPTH_TEST)
+
+  const ui = new SimpleUI('ui-controls')
+  let sceneIdx = 0
+  const scenes: Scene[] = [
+    new SingleFLetter3DScene(ctx) as Scene,
+    new FlatFLetterScene(ctx) as Scene,
+    new CircledFLetter3DScene(ctx) as Scene,
+    new RandomRectanglesScene(ctx) as Scene,
+  ]
+
+  ui.mount({
+    type: 'dropdown',
+    id: 'scene-selection',
+    label: 'Choose Scene',
+    persist: true,
+    options: scenes.map<{ name: string; value: string }>((scene, idx) => ({
+      name: scene.name,
+      value: idx.toString(),
+    })),
+    onInput: (value) => {
+      scenes[sceneIdx]?.clearUi(ui)
+      sceneIdx = Number.parseInt(value)
+      scenes[sceneIdx]?.setup(ui)
+    },
+  })
+
+  scenes[sceneIdx]?.setup(ui)
+
+  let then = 0
+  function draw(now: number) {
+    ctx.resizeCanvas()
+
+    scenes[sceneIdx]?.update({
+      mouse: { initialGrab, grabbed, movementX, movementY },
+    })
+
+    now *= 0.001
+    scenes[sceneIdx]?.render(now - then)
+
+    then = now
+
+    requestAnimationFrame(draw)
+  }
+
+  draw(0)
+} catch (e) {
+  // for iphone debugging
+  alert(e)
 }
-
-draw(0)
