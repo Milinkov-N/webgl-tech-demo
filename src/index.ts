@@ -545,6 +545,11 @@ class Transform2D {
 
 type TransformKey = 'tx' | 'ty' | 'tz' | 'rx' | 'ry' | 'rz' | 'sx' | 'sy' | 'sz'
 
+type Transform3DProperty = {
+  (): Num3
+  (x: number, y: number, z: number): void
+}
+
 type AnimationCallback = (dt: number) => void
 
 type AnimationType = 'constant' | 'wave' | AnimationCallback
@@ -557,83 +562,222 @@ interface TransformAnimation {
 }
 
 class Transform3D {
-  private _transforms: {
-    [key in TransformKey]: number
-  }
-
-  private _animations: { [key in TransformKey]?: [boolean, AnimationCallback] }
+  tx: number
+  ty: number
+  tz: number
+  rx: number
+  ry: number
+  rz: number
+  sx: number
+  sy: number
+  sz: number
 
   constructor() {
-    this._transforms = {
-      tx: 0,
-      ty: 0,
-      tz: 0,
-      rx: 0,
-      ry: 0,
-      rz: 0,
-      sx: 1,
-      sy: 1,
-      sz: 1,
-    }
-
-    this._animations = {}
+    this.tx = 0
+    this.ty = 0
+    this.tz = 0
+    this.rx = 0
+    this.ry = 0
+    this.rz = 0
+    this.sx = 1
+    this.sy = 1
+    this.sz = 1
   }
 
-  get(key: TransformKey): number {
-    return this._transforms[key]
-  }
-
-  set(key: TransformKey, value: number) {
-    this._transforms[key] = value
-  }
-
-  getMatrix() {
-    const tx = this._transforms.tx
-    const ty = this._transforms.ty
-    const tz = this._transforms.tz
-    const sx = this._transforms.sx
-    const sy = this._transforms.sy
-    const sz = this._transforms.sz
-
+  worldMatrix() {
+    const { tx, ty, tz, rx, ry, rz, sx, sy, sz } = this
     return Matrix4.translation(tx, ty, tz)
-      .xRotate(this._transforms.rx)
-      .yRotate(this._transforms.ry)
-      .zRotate(this._transforms.rz)
+      .xRotate(rx)
+      .yRotate(ry)
+      .zRotate(rz)
       .scale(sx, sy, sz)
   }
 
-  setTranslation(tx: number, ty: number, tz: number) {
-    this._transforms.tx = tx
-    this._transforms.ty = ty
-    this._transforms.tz = tz
+  translation: Transform3DProperty = (
+    x?: number,
+    y?: number,
+    z?: number,
+  ): any => {
+    if (
+      typeof x !== 'undefined' &&
+      typeof y !== 'undefined' &&
+      typeof z !== 'undefined'
+    ) {
+      this.tx = x
+      this.ty = y
+      this.tz = z
+    } else {
+      return [this.tx, this.ty, this.tz]
+    }
   }
 
-  setRotation(rx: number, ry: number, rz: number) {
-    this._transforms.rx = rx
-    this._transforms.ry = ry
-    this._transforms.rz = rz
+  rotation: Transform3DProperty = (x?: number, y?: number, z?: number): any => {
+    if (
+      typeof x !== 'undefined' &&
+      typeof y !== 'undefined' &&
+      typeof z !== 'undefined'
+    ) {
+      this.rx = x
+      this.ry = y
+      this.rz = z
+    } else {
+      return [this.rx, this.ry, this.rz]
+    }
   }
 
-  setScale(sx: number, sy: number, sz: number) {
-    this._transforms.sx = sx
-    this._transforms.sy = sy
-    this._transforms.sz = sz
+  scale: Transform3DProperty = (x?: number, y?: number, z?: number): any => {
+    if (
+      typeof x !== 'undefined' &&
+      typeof y !== 'undefined' &&
+      typeof z !== 'undefined'
+    ) {
+      this.sx = x
+      this.sy = y
+      this.sz = z
+    } else {
+      return [this.sx, this.sy, this.sz]
+    }
+  }
+
+  createUIFactory(): Transform3DUIFactory {
+    return new Transform3DUIFactory(this)
+  }
+}
+
+interface Transform3DUIOptions {
+  xMax: number
+  xMin?: number
+  yMax: number
+  yMin?: number
+  zMax: number
+  zMin?: number
+}
+
+interface Transform3DUISlider {
+  min?: number
+  scaleFactor?: number
+}
+
+class Transform3DUIFactory {
+  private _t: Transform3D
+
+  constructor(t: Transform3D) {
+    this._t = t
+  }
+
+  slider(
+    key: TransformKey,
+    name: string,
+    max: number,
+    { min = -max, scaleFactor = 1 }: Transform3DUISlider = {},
+  ): Slider {
+    const axis = key.at(1)
+    let callback: (value: string, ui: SimpleUI) => void
+
+    switch (key) {
+      case 'tx':
+      case 'ty':
+      case 'tz':
+        callback = (v) => (this._t[key] = Number.parseFloat(v))
+        break
+
+      case 'rx':
+      case 'ry':
+      case 'rz':
+        callback = (v) =>
+          (this._t[key] = MathUtils.degreesToRadians(Number.parseFloat(v)))
+        break
+
+      case 'sx':
+      case 'sy':
+      case 'sz':
+        callback = (v) => (this._t[key] = Number.parseFloat(v) / scaleFactor)
+        break
+    }
+
+    return {
+      type: 'slider',
+      id: `${name}-${axis}-axis`,
+      label: `${axis?.toUpperCase()} Axis`,
+      min,
+      max,
+      initialValue: this._t[key],
+      onInput: callback,
+    }
+  }
+
+  translationGroup(
+    name: string,
+    options: Transform3DUIOptions = { xMax: 1000, yMax: 1000, zMax: 1000 },
+  ): UIComponentGroup {
+    const groupId = `${name.toLowerCase()}-translation`
+    return {
+      type: 'group',
+      id: groupId,
+      legend: `${name} Translation`,
+      components: [
+        this.slider('tx', groupId, options.xMax),
+        this.slider('ty', groupId, options.yMax),
+        this.slider('tz', groupId, options.zMax),
+      ],
+    }
+  }
+
+  rotationGroup(
+    name: string,
+    options: Transform3DUIOptions = { xMax: 360, yMax: 360, zMax: 360 },
+  ): UIComponentGroup {
+    const groupId = `${name.toLowerCase()}-rotation}`
+    return {
+      type: 'group',
+      id: groupId,
+      legend: `${name} Rotation`,
+      components: [
+        this.slider('rx', groupId, options.xMax),
+        this.slider('ry', groupId, options.yMax),
+        this.slider('rz', groupId, options.zMax),
+      ],
+    }
+  }
+
+  scaleGroup(
+    name: string,
+    options: Transform3DUIOptions = { xMax: 20, yMax: 20, zMax: 20 },
+  ): UIComponentGroup {
+    const groupId = `${name.toLowerCase()}-scale`
+    return {
+      type: 'group',
+      id: groupId,
+      legend: `${name} Scale`,
+      components: [
+        this.slider('sx', groupId, options.xMax, { min: 0, scaleFactor: 10 }),
+        this.slider('sy', groupId, options.yMax, { min: 0, scaleFactor: 10 }),
+        this.slider('sz', groupId, options.zMax, { min: 0, scaleFactor: 10 }),
+      ],
+    }
+  }
+}
+
+class Transform3DAnimator {
+  private _t: Transform3D
+  private _animations: { [key in TransformKey]?: [boolean, AnimationCallback] }
+
+  constructor(t: Transform3D) {
+    this._t = t
+    this._animations = {}
   }
 
   addAnimation({ enabled, key, func, speed }: TransformAnimation) {
     switch (func) {
       case 'constant':
-        this._animations[key] = [
-          enabled,
-          (dt) => (this._transforms[key] += speed * dt),
-        ]
+        this._animations[key] = [enabled, (dt) => (this._t[key] += speed * dt)]
         break
 
       case 'wave':
         let n = 0
         this._animations[key] = [
           enabled,
-          (dt) => (this._transforms[key] = 1 + 5 * Math.sin(n++ * speed) * dt),
+          (dt) => (this._t[key] = 1 + 5 * Math.sin(n++ * speed) * dt),
         ]
         break
 
@@ -2043,6 +2187,7 @@ class FLetter3DSceneBase extends Scene {
   protected _perspectiveCamera: Matrix4
   protected _letterGeometry: GeometryData
   protected _letterTransform: Transform3D
+  protected _letterTransformAnimation: Transform3DAnimator
   protected _projType: ProjType
 
   constructor(
@@ -2055,6 +2200,9 @@ class FLetter3DSceneBase extends Scene {
     this._vao = this._ctx.createVertexArray()
     this._letterGeometry = Geometry.FLetter3D()
     this._letterTransform = new Transform3D()
+    this._letterTransformAnimation = new Transform3DAnimator(
+      this._letterTransform,
+    )
     this._projType = 'ortho'
 
     this._orthoCamera = Matrix4.orthographic({
@@ -2073,7 +2221,7 @@ class FLetter3DSceneBase extends Scene {
       far: 2000,
     })
 
-    this._letterTransform.setTranslation(0, 0, -1000)
+    this._letterTransform.translation(0, 0, -1000)
 
     this._uiComponents = [
       {
@@ -2128,7 +2276,7 @@ class FLetter3DSceneBase extends Scene {
 }
 
 class SingleFLetter3DScene extends FLetter3DSceneBase {
-  private _cameraTranslation: Num3
+  private _cameraTransform: Transform3D
 
   private _boxProgram: Program
   private _boxVao: VertexArray
@@ -2141,170 +2289,23 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       program: ctx.createProgram('3d-lighting'),
     })
 
-    this._cameraTranslation = [100, 10, 0]
+    this._cameraTransform = new Transform3D()
 
     this._boxProgram = ctx.createProgram('3d-default')
     this._boxVao = ctx.createVertexArray()
     this._boxGeometry = Geometry.Box()
     this._boxTransform = new Transform3D()
 
-    this._boxTransform.setScale(10, 10, 10)
-    this._boxTransform.setTranslation(0, 100, -1000)
+    this._boxTransform.scale(10, 10, 10)
+    this._boxTransform.translation(0, 100, -900)
 
-    const translationCallback = (key: TransformKey) => (value: string) => {
-      this._letterTransform.set(key, Number.parseFloat(value))
-    }
+    const cameraUIFactory = this._cameraTransform.createUIFactory()
+    const letterUIFactory = this._letterTransform.createUIFactory()
 
-    const scaleCallback = (key: TransformKey) => (value: string) => {
-      const xScale = Number.parseFloat(value)
-      this._letterTransform.set(key, xScale)
-    }
-
-    const rotationCallback = (key: TransformKey) => (value: string) => {
-      const degrees = Number.parseFloat(value)
-      const radians = MathUtils.degreesToRadians(degrees)
-      this._letterTransform.set(key, radians)
-    }
-
-    this._uiComponents.push(
-      {
-        type: 'group',
-        id: 'camera-translation',
-        legend: 'Camera Translation',
-        components: [
-          {
-            type: 'slider',
-            id: 'x-max',
-            label: 'X Max',
-            min: -this._ctx.canvasSize[0],
-            max: this._ctx.canvasSize[0],
-            initialValue: this._cameraTranslation[0],
-            onInput: (value) =>
-              (this._cameraTranslation[0] = Number.parseFloat(value)),
-          },
-          {
-            type: 'slider',
-            id: 'y-max',
-            label: 'Y Max',
-            min: -this._ctx.canvasSize[1],
-            max: this._ctx.canvasSize[1],
-            initialValue: this._cameraTranslation[1],
-            onInput: (value) =>
-              (this._cameraTranslation[1] = Number.parseFloat(value)),
-          },
-          {
-            type: 'slider',
-            id: 'z-max',
-            label: 'Z Max',
-            min: -2000,
-            max: 2000,
-            initialValue: this._cameraTranslation[2],
-            onInput: (value) =>
-              (this._cameraTranslation[2] = Number.parseFloat(value)),
-          },
-        ],
-      },
-      {
-        type: 'group',
-        id: 'letter-translation',
-        legend: 'Letter Translation',
-        components: [
-          {
-            type: 'slider',
-            id: 'x-max',
-            label: 'X Max',
-            min: -this._ctx.canvasSize[0],
-            max: this._ctx.canvasSize[0],
-            initialValue: this._letterTransform.get('tx'),
-            onInput: translationCallback('tx'),
-          },
-          {
-            type: 'slider',
-            id: 'y-max',
-            label: 'Y Max',
-            min: -this._ctx.canvasSize[1],
-            max: this._ctx.canvasSize[1],
-            initialValue: this._letterTransform.get('ty'),
-            onInput: translationCallback('ty'),
-          },
-          {
-            type: 'slider',
-            id: 'z-max',
-            label: 'Z Max',
-            min: -2000,
-            max: 1,
-            initialValue: -1000,
-            onInput: translationCallback('tz'),
-          },
-        ],
-      },
-      {
-        type: 'group',
-        id: 'letter-scale',
-        legend: 'Letter Scale',
-        components: [
-          {
-            type: 'slider',
-            id: 'x-scale',
-            label: 'X Scale',
-            max: 10,
-            initialValue: this._letterTransform.get('sx'),
-            onInput: scaleCallback('sx'),
-          },
-          {
-            type: 'slider',
-            id: 'y-scale',
-            label: 'Y Scale',
-            max: 10,
-            initialValue: this._letterTransform.get('sy'),
-            onInput: scaleCallback('sy'),
-          },
-          {
-            type: 'slider',
-            id: 'z-scale',
-            label: 'Z Scale',
-            max: 10,
-            initialValue: this._letterTransform.get('sz'),
-            onInput: scaleCallback('sz'),
-          },
-        ],
-      },
-
-      {
-        type: 'group',
-        id: 'letter-rotation',
-        legend: 'Letter Rotation',
-        components: [
-          {
-            type: 'slider',
-            id: 'angle-x',
-            label: 'X Angle',
-            min: -180,
-            max: 180,
-            initialValue: this._letterTransform.get('rx'),
-            onInput: rotationCallback('rx'),
-          },
-          {
-            type: 'slider',
-            id: 'angle-y',
-            label: 'Y Angle',
-            min: -180,
-            max: 180,
-            initialValue: this._letterTransform.get('ry'),
-            onInput: rotationCallback('ry'),
-          },
-          {
-            type: 'slider',
-            id: 'angle-z',
-            label: 'Z Angle',
-            min: -180,
-            max: 180,
-            initialValue: this._letterTransform.get('rz'),
-            onInput: rotationCallback('rz'),
-          },
-        ],
-      },
-    )
+    this._uiComponents.push(cameraUIFactory.translationGroup('Camera'))
+    this._uiComponents.push(letterUIFactory.translationGroup('Letter'))
+    this._uiComponents.push(letterUIFactory.rotationGroup('Letter'))
+    this._uiComponents.push(letterUIFactory.scaleGroup('Letter'))
   }
 
   override setup(ui: SimpleUI): void {
@@ -2323,6 +2324,14 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     }
 
     this._program.use()
+
+    this._program.setUniform(
+      'uLightPos',
+      this._boxTransform.tx,
+      this._boxTransform.ty,
+      this._boxTransform.tz,
+    )
+
     this._vao.bind()
 
     if (typeof this._letterGeometry.normalData != 'undefined') {
@@ -2331,10 +2340,6 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       )
       this._program.setupAttribPointer(normalPtr)
     }
-
-    // this._program.setUniform('uDirLight.position', 0.5, 0.7, 1)
-    // this._program.setUniform('uDirLight.ambient', 0.6)
-    // this._program.setUniform('uWorldLightPosition', 0, 10, -100)
   }
 
   override render(): void {
@@ -2344,33 +2349,18 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     this._vao.bind()
 
     const viewMat = Matrix4.lookAt(
-      new Vec3(this._cameraTranslation),
-      new Vec3([
-        this._letterTransform.get('tx'),
-        this._letterTransform.get('ty'),
-        this._letterTransform.get('tz'),
-      ]),
+      new Vec3(this._cameraTransform.translation()),
+      new Vec3(this._letterTransform.translation()),
       new Vec3([0, 1, 0]),
     ).inverse()
 
-    const worldMat = this._letterTransform.getMatrix()
+    const worldMat = this._letterTransform.worldMatrix()
     const worldInverseTransposeMat = worldMat.inverse().transpose()
 
-    this._program.setUniform(
-      'uViewPos',
-      this._cameraTranslation[0],
-      this._cameraTranslation[1],
-      this._cameraTranslation[2],
-    )
+    this._program.setUniform('uViewPos', ...this._cameraTransform.translation())
 
     this._program.setUniform('uWorld', worldMat)
     this._program.setUniform('uWorldInverseTranspose', worldInverseTransposeMat)
-    this._program.setUniform(
-      'uLightPos',
-      this._boxTransform.get('tx'),
-      this._boxTransform.get('ty'),
-      this._boxTransform.get('tz'),
-    )
 
     this._program.setUniform(
       'uWorldProjection',
@@ -2381,7 +2371,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     this._boxProgram.use()
     this._boxVao.bind()
 
-    const boxMat = this._boxTransform.getMatrix()
+    const boxMat = this._boxTransform.worldMatrix()
     this._boxProgram.setUniform(
       'uModelProjection',
       this._computeProjection(boxMat, viewMat),
@@ -2421,7 +2411,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
     this._lookAt = 'origin'
     this._nLetters = 5
 
-    this._letterTransform.addAnimation({
+    this._letterTransformAnimation.addAnimation({
       enabled: false,
       key: 'sy',
       speed: 0.2,
@@ -2508,11 +2498,11 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
             onInput: (value) => {
               switch (value) {
                 case 'true':
-                  this._letterTransform.animating('sy', true)
+                  this._letterTransformAnimation.animating('sy', true)
                   break
 
                 case 'false':
-                  this._letterTransform.animating('sy', false)
+                  this._letterTransformAnimation.animating('sy', false)
                   break
               }
             },
@@ -2567,7 +2557,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
     this._program.use()
     this._vao.bind()
 
-    this._letterTransform.animate(dt)
+    this._letterTransformAnimation.animate(dt)
 
     if (this._cameraAngleIsAnimated) {
       const rotationSpeed = 15
@@ -2634,7 +2624,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
       const mat = viewProjMat
         .translate(x, 0, z)
         .yRotate(-angle)
-        .scale(1, this._letterTransform.get('sy'), 1)
+        .scale(1, this._letterTransform.sy, 1)
         .translate(-50, 75, 15)
 
       this._program.setUniform('uModelProjection', mat)
