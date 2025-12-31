@@ -1851,9 +1851,9 @@ class RandomRectanglesScene extends Scene {
     this._geometry = Geometry.square()
     this._rects = []
     this._rectParams = {
-      xMax: 120,
-      yMax: 120,
-      scaleMax: [2, 2],
+      xMax: this._ctx.canvasSize[0],
+      yMax: this._ctx.canvasSize[1],
+      scaleMax: [10, 10],
     }
 
     this._uiComponents = [
@@ -2006,8 +2006,16 @@ class FlatFLetterScene extends Scene {
     this._sceneVariant = 'simple'
     this._letterGeometry = Geometry.FLetter2D()
     this._letterTransform = new Transform2D()
-    this._translationDelta = [0, 0]
+    this._translationDelta = [
+      this._ctx.canvasSize[0] / 2,
+      this._ctx.canvasSize[1] / 2,
+    ]
     this._rectColor = [Math.random(), Math.random(), Math.random()]
+
+    this._letterTransform.translation = [
+      this._ctx.canvasSize[0] / 2,
+      this._ctx.canvasSize[1] / 2,
+    ]
 
     this._uiComponents = [
       {
@@ -2291,6 +2299,8 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
 
     this._cameraTransform = new Transform3D()
 
+    this._cameraTransform.translation(100, 200, -500)
+
     this._boxProgram = ctx.createProgram('3d-default')
     this._boxVao = ctx.createVertexArray()
     this._boxGeometry = Geometry.Box()
@@ -2407,7 +2417,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
 
     this._cameraAngle = 0
     this._cameraAngleIsAnimated = false
-    this._cameraTranslation = new Vec3([0, 0, 0])
+    this._cameraTranslation = new Vec3([100, 175, 0])
     this._lookAt = 'origin'
     this._nLetters = 5
 
@@ -2568,19 +2578,29 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
 
     let viewMat
     switch (this._lookAt) {
-      case 'origin':
-        viewMat = Matrix4.yRotation(
-          MathUtils.degreesToRadians(this._cameraAngle),
-        )
-          .translate(
-            this._cameraTranslation.x(),
-            this._cameraTranslation.y(),
-            radius * 1.5 + this._cameraTranslation.z(),
-          )
-          .inverse()
-        break
+      case 'origin': {
+        const up = new Vec3([0, 1, 0])
+        const originPos = new Vec3([0, 0, 0])
 
-      case 'f-letter':
+        const cameraView = Matrix4.translation(
+          this._cameraTranslation.x(),
+          -this._cameraTranslation.y(),
+          radius * 1.5 + this._cameraTranslation.z(),
+        )
+          .yRotate(-MathUtils.degreesToRadians(this._cameraAngle))
+          .inverse()
+
+        const cameraPos = new Vec3([
+          cameraView.buffer[12]!,
+          cameraView.buffer[13]!,
+          cameraView.buffer[14]!,
+        ])
+
+        viewMat = Matrix4.lookAt(cameraPos, originPos, up).inverse()
+        break
+      }
+
+      case 'f-letter': {
         const up = new Vec3([0, 1, 0])
         const letterPos = new Vec3([radius, 0, 0])
 
@@ -2601,6 +2621,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
         viewMat = Matrix4.lookAt(cameraPos, letterPos, up).inverse()
 
         break
+      }
     }
 
     let projMat
