@@ -979,6 +979,7 @@ class Program extends RenderCtxObject {
 interface VertexBuffer {
   name: string
   size: number
+  elements: number
   normalized?: boolean
   data: Float32Array | Uint8Array
 }
@@ -1182,7 +1183,36 @@ class Geometry {
       vertexData: {
         name: 'aPosition',
         size: 2,
+        elements: 6,
         data: new Float32Array([0, 0, 0, 10, 10, 10, 0, 0, 10, 10, 10, 0]),
+      },
+    }
+  }
+
+  static grid(x: number, z: number, step: number): GeometryData {
+    let vertices = []
+
+    const n = z / step
+    for (let i = 0; i <= n; i++) {
+      vertices.push(i * step, 0, -z, i * step, 0, z)
+      vertices.push(-(i * step), 0, -z, -(i * step), 0, z)
+    }
+
+    for (let i = 0; i <= n; i++) {
+      vertices.push(x, 0, i * step, -x, 0, i * step)
+      vertices.push(x, 0, -(i * step), -x, 0, -(i * step))
+    }
+
+    const edgeLines = 2
+    const nVerticesPerLine = 4
+    const nAxis = 2
+
+    return {
+      vertexData: {
+        name: 'aPosition',
+        size: 3,
+        elements: (n + edgeLines) * nVerticesPerLine * nAxis,
+        data: new Float32Array(vertices),
       },
     }
   }
@@ -1192,6 +1222,7 @@ class Geometry {
       vertexData: {
         name: 'aPosition',
         size: 2,
+        elements: 18,
         data: new Float32Array([
           // left column
           0, 0, 0, 150, 30, 0, 0, 150, 30, 150, 30, 0,
@@ -1211,6 +1242,7 @@ class Geometry {
       vertexData: {
         name: 'aPosition',
         size: 3,
+        elements: 36,
         data: new Float32Array([
           // Front face
           -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5,
@@ -1240,6 +1272,7 @@ class Geometry {
       colorData: {
         name: 'aColor',
         size: 3,
+        elements: 36,
         data: new Float32Array([
           // Front face
           0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0,
@@ -1269,6 +1302,7 @@ class Geometry {
       normalData: {
         name: 'aNormal',
         size: 3,
+        elements: 96,
         data: new Float32Array([
           // Front face
           0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0,
@@ -1303,6 +1337,7 @@ class Geometry {
       vertexData: {
         name: 'aPosition',
         size: 3,
+        elements: 96,
         data: new Float32Array([
           // left column front
           0, 0, 0, 0, -150, 0, 30, 0, 0, 0, -150, 0, 30, -150, 0, 30, 0, 0,
@@ -1368,6 +1403,7 @@ class Geometry {
       colorData: {
         name: 'aColor',
         size: 3,
+        elements: 96,
         normalized: true,
         data: new Uint8Array([
           // left column front
@@ -1438,6 +1474,7 @@ class Geometry {
       normalData: {
         name: 'aNormal',
         size: 3,
+        elements: 96,
         data: new Float32Array([
           // left column front
           0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1,
@@ -1932,7 +1969,11 @@ class RandomRectanglesScene extends Scene {
         rect.color[1],
         rect.color[2],
       )
-      this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 6)
+      this._ctx.gl.drawArrays(
+        this._ctx.gl.TRIANGLES,
+        0,
+        this._geometry.vertexData.elements,
+      )
     })
   }
 
@@ -2137,7 +2178,11 @@ class FlatFLetterScene extends Scene {
           this._letterTransform.getMatrix([width, height]),
         )
 
-        this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 18)
+        this._ctx.gl.drawArrays(
+          this._ctx.gl.TRIANGLES,
+          0,
+          this._letterGeometry.vertexData.elements,
+        )
         break
       }
 
@@ -2218,7 +2263,7 @@ class FLetter3DSceneBase extends Scene {
       left: -this._ctx.canvasSize[0] / 2,
       right: this._ctx.canvasSize[0] / 2,
       bottom: -this._ctx.canvasSize[1] / 2,
-      near: 1,
+      near: -2000,
       far: 2000,
     })
 
@@ -2229,7 +2274,7 @@ class FLetter3DSceneBase extends Scene {
       far: 2000,
     })
 
-    this._letterTransform.translation(0, 0, -1000)
+    this._letterTransform.translation(0, 0, -0)
 
     this._uiComponents = [
       {
@@ -2291,6 +2336,10 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
   private _boxGeometry: GeometryData
   private _boxTransform: Transform3D
 
+  private _gridVao: VertexArray
+  private _gridGeometry: GeometryData
+  private _gridProgram: Program
+
   constructor(ctx: RenderContext) {
     super(ctx, {
       sceneName: '3D F Letter',
@@ -2299,7 +2348,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
 
     this._cameraTransform = new Transform3D()
 
-    this._cameraTransform.translation(100, 200, -500)
+    this._cameraTransform.translation(100, 200, 250)
 
     this._boxProgram = ctx.createProgram('3d-default')
     this._boxVao = ctx.createVertexArray()
@@ -2307,7 +2356,11 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     this._boxTransform = new Transform3D()
 
     this._boxTransform.scale(10, 10, 10)
-    this._boxTransform.translation(0, 100, -900)
+    this._boxTransform.translation(0, 100, 100)
+
+    this._gridVao = this._ctx.createVertexArray()
+    this._gridProgram = this._ctx.createProgram('3d-flat-clr')
+    this._gridGeometry = Geometry.grid(1000, 1000, 100)
 
     const cameraUIFactory = this._cameraTransform.createUIFactory()
     const letterUIFactory = this._letterTransform.createUIFactory()
@@ -2332,6 +2385,15 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       const clrPtr = this._boxVao.addVertexBuffer(this._boxGeometry.colorData)
       this._program.setupAttribPointer(clrPtr)
     }
+
+    this._gridProgram.link()
+
+    this._gridProgram.use()
+    this._gridProgram.setUniform('uColor', 0.8, 0.8, 0.8)
+
+    this._gridVao.bind()
+    const gridPtr = this._gridVao.addVertexBuffer(this._gridGeometry.vertexData)
+    this._gridProgram.setupAttribPointer(gridPtr)
 
     this._program.use()
 
@@ -2364,7 +2426,9 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       new Vec3([0, 1, 0]),
     ).inverse()
 
-    const worldMat = this._letterTransform.worldMatrix()
+    const worldMat = this._letterTransform
+      .worldMatrix()
+      .translate(-12.5, 150, 15)
     const worldInverseTransposeMat = worldMat.inverse().transpose()
 
     this._program.setUniform('uViewPos', ...this._cameraTransform.translation())
@@ -2372,11 +2436,26 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     this._program.setUniform('uWorld', worldMat)
     this._program.setUniform('uWorldInverseTranspose', worldInverseTransposeMat)
 
-    this._program.setUniform(
-      'uWorldProjection',
-      this._computeProjection(worldMat, viewMat),
+    const worldProjection = this._computeProjection(worldMat, viewMat)
+    this._program.setUniform('uWorldProjection', worldProjection)
+    this._ctx.gl.drawArrays(
+      this._ctx.gl.TRIANGLES,
+      0,
+      this._letterGeometry.vertexData.elements,
     )
-    this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 16 * 6)
+
+    this._gridProgram.use()
+    this._gridProgram.setUniform(
+      'uModelProjection',
+      this._computeProjection(Matrix4.identity(), viewMat),
+    )
+
+    this._gridVao.bind()
+    this._ctx.gl.drawArrays(
+      this._ctx.gl.LINES,
+      0,
+      this._gridGeometry.vertexData.elements,
+    )
 
     this._boxProgram.use()
     this._boxVao.bind()
@@ -2386,7 +2465,11 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       'uModelProjection',
       this._computeProjection(boxMat, viewMat),
     )
-    this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 36)
+    this._ctx.gl.drawArrays(
+      this._ctx.gl.TRIANGLES,
+      0,
+      this._letterGeometry.vertexData.elements,
+    )
   }
 
   private _computeProjection(world: Matrix4, view: Matrix4): Matrix4 {
@@ -2409,6 +2492,10 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
   private _lookAt: LookAt
   private _nLetters: number
 
+  private _gridVao: VertexArray
+  private _gridGeometry: GeometryData
+  private _gridProgram: Program
+
   constructor(ctx: RenderContext) {
     super(ctx, {
       sceneName: '3D Letters in Circle',
@@ -2427,6 +2514,10 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
       speed: 0.2,
       func: 'wave',
     })
+
+    this._gridVao = this._ctx.createVertexArray()
+    this._gridGeometry = Geometry.grid(1000, 1000, 100)
+    this._gridProgram = this._ctx.createProgram('3d-flat-clr')
 
     this._uiComponents.push(
       {
@@ -2561,6 +2652,18 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
     )
   }
 
+  override setup(ui: SimpleUI): void {
+    super.setup(ui)
+
+    this._gridProgram.link()
+    this._gridProgram.use()
+    this._gridProgram.setUniform('uColor', 0.8, 0.8, 0.8)
+
+    this._gridVao.bind()
+    const gridPtr = this._gridVao.addVertexBuffer(this._gridGeometry.vertexData)
+    this._program.setupAttribPointer(gridPtr)
+  }
+
   override render(dt: number): void {
     super.render(0)
 
@@ -2602,7 +2705,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
 
       case 'f-letter': {
         const up = new Vec3([0, 1, 0])
-        const letterPos = new Vec3([radius, 0, 0])
+        const letterPos = new Vec3([radius, 75, 0])
 
         const cameraView = Matrix4.yRotation(
           MathUtils.degreesToRadians(this._cameraAngle),
@@ -2637,6 +2740,18 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
 
     const viewProjMat = projMat.multiply(viewMat)
 
+    this._gridProgram.use()
+    this._gridProgram.setUniform('uModelProjection', viewProjMat)
+    this._gridVao.bind()
+    this._ctx.gl.drawArrays(
+      this._ctx.gl.LINES,
+      0,
+      this._gridGeometry.vertexData.elements,
+    )
+
+    this._program.use()
+    this._vao.bind()
+
     for (let i = 0; i < this._nLetters; i++) {
       const angle = (i * Math.PI * 2) / this._nLetters
 
@@ -2646,10 +2761,14 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
         .translate(x, 0, z)
         .yRotate(-angle)
         .scale(1, this._letterTransform.sy, 1)
-        .translate(-50, 75, 15)
+        .translate(-50, 150, 15)
 
       this._program.setUniform('uModelProjection', mat)
-      this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 16 * 6)
+      this._ctx.gl.drawArrays(
+        this._ctx.gl.TRIANGLES,
+        0,
+        this._letterGeometry.vertexData.elements,
+      )
     }
   }
 }
@@ -2720,9 +2839,9 @@ try {
   const ui = new SimpleUI('ui-controls')
   let sceneIdx = 0
   const scenes: Scene[] = [
+    new CircledFLetter3DScene(ctx) as Scene,
     new SingleFLetter3DScene(ctx) as Scene,
     new FlatFLetterScene(ctx) as Scene,
-    new CircledFLetter3DScene(ctx) as Scene,
     new RandomRectanglesScene(ctx) as Scene,
   ]
 
