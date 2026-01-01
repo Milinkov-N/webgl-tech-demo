@@ -976,17 +976,28 @@ class Program extends RenderCtxObject {
   }
 }
 
-interface VertexBuffer {
+interface ArrayBuffer {
   name: string
   size: number
-  elements: number
   normalized?: boolean
   data: Float32Array | Uint8Array
 }
 
+type EboUint8 = 5121
+type EboUint16 = 5123
+type EboUint32 = 5125
+type EboType = EboUint8 | EboUint16 | EboUint32
+
+type ElementsBuffer = Uint8Array | Uint16Array | Uint32Array
+
+interface Ebo {
+  type: EboType
+  buffer: WebGLBuffer
+}
+
 class VertexArray extends RenderCtxObject {
   protected _handle: WebGLVertexArrayObject
-  protected _ebo: WebGLBuffer | undefined
+  protected _ebo: Ebo | undefined
 
   readonly vbos: Map<string, { buffer: WebGLBuffer; ptr: AttribPointer }>
 
@@ -1001,12 +1012,16 @@ class VertexArray extends RenderCtxObject {
     this._ctx.bindVertexArray(this._handle)
   }
 
+  eboType() {
+    return this._ebo?.type
+  }
+
   addVertexBuffer({
     name,
     size,
     normalized = false,
     data,
-  }: VertexBuffer): AttribPointer {
+  }: ArrayBuffer): AttribPointer {
     const vbo = this._ctx.createBuffer()
     this._ctx.bindBuffer(this._ctx.ARRAY_BUFFER, vbo)
     this._ctx.bufferData(this._ctx.ARRAY_BUFFER, data, this._ctx.STATIC_DRAW)
@@ -1027,6 +1042,32 @@ class VertexArray extends RenderCtxObject {
     })
 
     return { name: name, type, size: size, normalized }
+  }
+
+  addElementsBuffer(data: ElementsBuffer) {
+    const ebo = this._ctx.createBuffer()
+    this._ctx.bindBuffer(this._ctx.ELEMENT_ARRAY_BUFFER, ebo)
+    this._ctx.bufferData(
+      this._ctx.ELEMENT_ARRAY_BUFFER,
+      data,
+      this._ctx.STATIC_DRAW,
+    )
+
+    let type: EboType
+    if (data instanceof Uint8Array) {
+      type = this._ctx.UNSIGNED_BYTE
+    } else if (data instanceof Uint16Array) {
+      type = this._ctx.UNSIGNED_SHORT
+    } else if (data instanceof Uint32Array) {
+      type = this._ctx.UNSIGNED_INT
+    } else {
+      throw new Error('Unsupported EBO buffer type')
+    }
+
+    this._ebo = {
+      type,
+      buffer: ebo,
+    }
   }
 }
 
@@ -1051,6 +1092,28 @@ class RenderContext {
     ctx._observer = await ctx._setupCanvasResizeObserver()
 
     return ctx
+  }
+
+  draw(vao: VertexArray, data: GeometryData) {
+    let drawMode: 4 | 1
+
+    switch (data.mode) {
+      case 'tris':
+        drawMode = this.gl.TRIANGLES
+        break
+      case 'lines':
+        drawMode = this.gl.LINES
+        break
+    }
+
+    switch (data.type) {
+      case 'basic':
+        this.gl.drawArrays(drawMode, 0, data.elements)
+        break
+      case 'indexed':
+        this.gl.drawElements(drawMode, data.elements, vao.eboType()!, 0)
+        break
+    }
   }
 
   setCanvasSize(width: number, height: number) {
@@ -1171,21 +1234,37 @@ class RenderContext {
   }
 }
 
-interface GeometryData {
-  vertexData: VertexBuffer
-  colorData?: VertexBuffer
-  normalData?: VertexBuffer
+interface GeometryDataBase {
+  mode: 'tris' | 'lines'
+  elements: number
+  vertexData: ArrayBuffer
+  colorData?: ArrayBuffer
+  normalData?: ArrayBuffer
 }
 
+interface GeometryDataBasic extends GeometryDataBase {
+  type: 'basic'
+}
+
+interface GeometryDataIndexed extends GeometryDataBase {
+  type: 'indexed'
+  indexData: ElementsBuffer
+}
+
+type GeometryData = GeometryDataBasic | GeometryDataIndexed
+
 class Geometry {
-  static square(): GeometryData {
+  static plane(): GeometryData {
     return {
+      type: 'indexed',
+      mode: 'tris',
+      elements: 6,
       vertexData: {
         name: 'aPosition',
         size: 2,
-        elements: 6,
-        data: new Float32Array([0, 0, 0, 10, 10, 10, 0, 0, 10, 10, 10, 0]),
+        data: new Float32Array([0, 0, 0, 10, 10, 10, 10, 0]),
       },
+      indexData: new Uint8Array([0, 1, 2, 0, 2, 3]),
     }
   }
 
@@ -1203,46 +1282,60 @@ class Geometry {
       vertices.push(x, 0, -(i * step), -x, 0, -(i * step))
     }
 
-    const edgeLines = 2
-    const nVerticesPerLine = 4
-    const nAxis = 2
-
     return {
+      type: 'basic',
+      mode: 'lines',
+      elements: vertices.length,
       vertexData: {
         name: 'aPosition',
         size: 3,
-        elements: (n + edgeLines) * nVerticesPerLine * nAxis,
         data: new Float32Array(vertices),
       },
     }
   }
 
   static FLetter2D(): GeometryData {
+    const indexData = new Uint8Array([
+      // left column
+      0, 1, 3, 1, 2, 3,
+
+      // top rung
+      3, 4, 5, 5, 6, 3,
+
+      // middle rung
+      10, 7, 8, 8, 9, 10,
+    ])
+
     return {
+      type: 'indexed',
+      mode: 'tris',
+      elements: indexData.length,
       vertexData: {
         name: 'aPosition',
         size: 2,
-        elements: 18,
         data: new Float32Array([
           // left column
-          0, 0, 0, 150, 30, 0, 0, 150, 30, 150, 30, 0,
+          0, 0, 0, 150, 30, 150, 30, 0,
 
           // top rung
-          30, 0, 30, 30, 100, 0, 30, 30, 100, 30, 100, 0,
+          30, 30, 100, 30, 100, 0,
 
           // middle rung
-          30, 60, 30, 90, 67, 60, 30, 90, 67, 90, 67, 60,
+          30, 60, 30, 90, 67, 90, 67, 60,
         ]),
       },
+      indexData,
     }
   }
 
   static Box(): GeometryData {
     return {
+      type: 'basic',
+      mode: 'tris',
+      elements: 36,
       vertexData: {
         name: 'aPosition',
         size: 3,
-        elements: 36,
         data: new Float32Array([
           // Front face
           -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5,
@@ -1272,7 +1365,6 @@ class Geometry {
       colorData: {
         name: 'aColor',
         size: 3,
-        elements: 36,
         data: new Float32Array([
           // Front face
           0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0,
@@ -1302,7 +1394,6 @@ class Geometry {
       normalData: {
         name: 'aNormal',
         size: 3,
-        elements: 96,
         data: new Float32Array([
           // Front face
           0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0,
@@ -1334,10 +1425,12 @@ class Geometry {
 
   static FLetter3D(): GeometryData {
     return {
+      type: 'basic',
+      mode: 'tris',
+      elements: 96,
       vertexData: {
         name: 'aPosition',
         size: 3,
-        elements: 96,
         data: new Float32Array([
           // left column front
           0, 0, 0, 0, -150, 0, 30, 0, 0, 0, -150, 0, 30, -150, 0, 30, 0, 0,
@@ -1403,7 +1496,6 @@ class Geometry {
       colorData: {
         name: 'aColor',
         size: 3,
-        elements: 96,
         normalized: true,
         data: new Uint8Array([
           // left column front
@@ -1474,7 +1566,6 @@ class Geometry {
       normalData: {
         name: 'aNormal',
         size: 3,
-        elements: 96,
         data: new Float32Array([
           // left column front
           0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1,
@@ -1885,7 +1976,7 @@ class RandomRectanglesScene extends Scene {
 
     this._program = this._ctx.createProgram('2d-default')
     this._vao = this._ctx.createVertexArray()
-    this._geometry = Geometry.square()
+    this._geometry = Geometry.plane()
     this._rects = []
     this._rectParams = {
       xMax: this._ctx.canvasSize[0],
@@ -1945,6 +2036,9 @@ class RandomRectanglesScene extends Scene {
     this._vao.vbos.entries().forEach(([_, { ptr }]) => {
       this._program.setupAttribPointer(ptr)
     })
+
+    if (this._geometry.type === 'indexed')
+      this._vao.addElementsBuffer(this._geometry.indexData)
   }
 
   update(): void {}
@@ -1969,11 +2063,8 @@ class RandomRectanglesScene extends Scene {
         rect.color[1],
         rect.color[2],
       )
-      this._ctx.gl.drawArrays(
-        this._ctx.gl.TRIANGLES,
-        0,
-        this._geometry.vertexData.elements,
-      )
+
+      this._ctx.draw(this._vao, this._geometry)
     })
   }
 
@@ -2141,6 +2232,9 @@ class FlatFLetterScene extends Scene {
       this._program.setupAttribPointer(ptr)
     })
 
+    if (this._letterGeometry.type === 'indexed')
+      this._vao.addElementsBuffer(this._letterGeometry.indexData)
+
     this._program.setUniform(
       'uColor',
       this._rectColor[0],
@@ -2178,11 +2272,7 @@ class FlatFLetterScene extends Scene {
           this._letterTransform.getMatrix([width, height]),
         )
 
-        this._ctx.gl.drawArrays(
-          this._ctx.gl.TRIANGLES,
-          0,
-          this._letterGeometry.vertexData.elements,
-        )
+        this._ctx.draw(this._vao, this._letterGeometry)
         break
       }
 
@@ -2219,7 +2309,7 @@ class FlatFLetterScene extends Scene {
             .multiply(Matrix3.translation([-50, -75])),
         )
 
-        this._ctx.gl.drawArrays(this._ctx.gl.TRIANGLES, 0, 18)
+        this._ctx.draw(this._vao, this._letterGeometry)
         break
       }
     }
@@ -2375,15 +2465,13 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     super.setup(ui)
 
     this._boxProgram.link()
-
     this._boxProgram.use()
     this._boxVao.bind()
     const vertexPtr = this._boxVao.addVertexBuffer(this._boxGeometry.vertexData)
-    this._program.setupAttribPointer(vertexPtr)
-
+    this._boxProgram.setupAttribPointer(vertexPtr)
     if (this._boxGeometry.colorData) {
       const clrPtr = this._boxVao.addVertexBuffer(this._boxGeometry.colorData)
-      this._program.setupAttribPointer(clrPtr)
+      this._boxProgram.setupAttribPointer(clrPtr)
     }
 
     this._gridProgram.link()
@@ -2438,11 +2526,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
 
     const worldProjection = this._computeProjection(worldMat, viewMat)
     this._program.setUniform('uWorldProjection', worldProjection)
-    this._ctx.gl.drawArrays(
-      this._ctx.gl.TRIANGLES,
-      0,
-      this._letterGeometry.vertexData.elements,
-    )
+    this._ctx.draw(this._vao, this._letterGeometry)
 
     this._gridProgram.use()
     this._gridProgram.setUniform(
@@ -2451,11 +2535,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     )
 
     this._gridVao.bind()
-    this._ctx.gl.drawArrays(
-      this._ctx.gl.LINES,
-      0,
-      this._gridGeometry.vertexData.elements,
-    )
+    this._ctx.draw(this._gridVao, this._gridGeometry)
 
     this._boxProgram.use()
     this._boxVao.bind()
@@ -2465,11 +2545,8 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
       'uModelProjection',
       this._computeProjection(boxMat, viewMat),
     )
-    this._ctx.gl.drawArrays(
-      this._ctx.gl.TRIANGLES,
-      0,
-      this._letterGeometry.vertexData.elements,
-    )
+
+    this._ctx.draw(this._boxVao, this._boxGeometry)
   }
 
   private _computeProjection(world: Matrix4, view: Matrix4): Matrix4 {
@@ -2743,11 +2820,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
     this._gridProgram.use()
     this._gridProgram.setUniform('uModelProjection', viewProjMat)
     this._gridVao.bind()
-    this._ctx.gl.drawArrays(
-      this._ctx.gl.LINES,
-      0,
-      this._gridGeometry.vertexData.elements,
-    )
+    this._ctx.draw(this._gridVao, this._gridGeometry)
 
     this._program.use()
     this._vao.bind()
@@ -2764,11 +2837,7 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
         .translate(-50, 150, 15)
 
       this._program.setUniform('uModelProjection', mat)
-      this._ctx.gl.drawArrays(
-        this._ctx.gl.TRIANGLES,
-        0,
-        this._letterGeometry.vertexData.elements,
-      )
+      this._ctx.draw(this._vao, this._letterGeometry)
     }
   }
 }
