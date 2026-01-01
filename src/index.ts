@@ -87,7 +87,7 @@ interface Perspective {
 class Matrix3 {
   readonly buffer: number[]
 
-  private constructor(buffer: number[]) {
+  constructor(buffer: number[]) {
     this.buffer = buffer
   }
 
@@ -980,6 +980,7 @@ interface ArrayBuffer {
   name: string
   size: number
   normalized?: boolean
+  hint?: 'static' | 'dynamic'
   data: Float32Array | Uint8Array
 }
 
@@ -1020,11 +1021,12 @@ class VertexArray extends RenderCtxObject {
     name,
     size,
     normalized = false,
+    hint = 'static',
     data,
   }: ArrayBuffer): AttribPointer {
     const vbo = this._ctx.createBuffer()
     this._ctx.bindBuffer(this._ctx.ARRAY_BUFFER, vbo)
-    this._ctx.bufferData(this._ctx.ARRAY_BUFFER, data, this._ctx.STATIC_DRAW)
+    this._ctx.bufferData(this._ctx.ARRAY_BUFFER, data, this._usageHint(hint))
 
     let type: AttribPointerType
 
@@ -1038,10 +1040,27 @@ class VertexArray extends RenderCtxObject {
 
     this.vbos.set(name, {
       buffer: vbo,
-      ptr: { name: name, type, size: size, normalized },
+      ptr: { name, type, size, normalized },
     })
 
-    return { name: name, type, size: size, normalized }
+    return { name, type, size, normalized }
+  }
+
+  allocVertexBuffer({
+    name,
+    size,
+    type,
+    hint = 'static',
+    normalized = false,
+  }: Omit<ArrayBuffer, 'data'> & { type: AttribPointerType }) {
+    const vbo = this._ctx.createBuffer()
+    this._ctx.bindBuffer(this._ctx.ARRAY_BUFFER, vbo)
+    this._ctx.bufferData(this._ctx.ARRAY_BUFFER, size, this._usageHint(hint))
+
+    this.vbos.set(name, {
+      buffer: vbo,
+      ptr: { name: name, type, size: size, normalized },
+    })
   }
 
   addElementsBuffer(data: ElementsBuffer) {
@@ -1068,6 +1087,31 @@ class VertexArray extends RenderCtxObject {
       type,
       buffer: ebo,
     }
+  }
+
+  updateVertexBuffer(name: string, data: Float32Array | Uint8Array) {
+    const vbo = this.vbos.get(name)
+
+    if (typeof vbo === 'undefined')
+      throw new Error(`Couldn't locate '${name}' vertex buffer`)
+
+    this._ctx.bindBuffer(this._ctx.ARRAY_BUFFER, vbo.buffer)
+    this._ctx.bufferSubData(this._ctx.ARRAY_BUFFER, 0, data)
+  }
+
+  private _usageHint(hint: 'static' | 'dynamic') {
+    let usageHint: 35044 | 35048
+
+    switch (hint) {
+      case 'static':
+        usageHint = 35044
+        break
+      case 'dynamic':
+        usageHint = 35048
+        break
+    }
+
+    return usageHint
   }
 }
 
@@ -1264,7 +1308,7 @@ class Geometry {
         size: 2,
         data: new Float32Array([0, 0, 0, 10, 10, 10, 10, 0]),
       },
-      indexData: new Uint8Array([0, 1, 2, 0, 2, 3]),
+      indexData: new Uint8Array([0, 2, 3, 0, 1, 2]),
     }
   }
 
@@ -1968,20 +2012,24 @@ class RandomRectanglesScene extends Scene {
   private _program: Program
   private _vao: VertexArray
   private _geometry: GeometryData
-  private _rects: Rectangle[]
+  private _instances: number
+  private _matrixBuffer: Float32Array
+  private _colorBuffer: Float32Array
   private _rectParams: RectangleGenParams
 
   constructor(ctx: RenderContext) {
     super(ctx, 'Random Rectangles', [0.5, 0.75, 0.125])
 
-    this._program = this._ctx.createProgram('2d-default')
+    this._program = this._ctx.createProgram('2d-instanced')
     this._vao = this._ctx.createVertexArray()
     this._geometry = Geometry.plane()
-    this._rects = []
+    this._instances = 10000
+    this._matrixBuffer = new Float32Array(this._instances * 9)
+    this._colorBuffer = new Float32Array(this._instances * 3)
     this._rectParams = {
       xMax: this._ctx.canvasSize[0],
       yMax: this._ctx.canvasSize[1],
-      scaleMax: [10, 10],
+      scaleMax: [5, 5],
     }
 
     this._uiComponents = [
@@ -2006,6 +2054,7 @@ class RandomRectanglesScene extends Scene {
         label: 'Scale X',
         id: 'scale-x-max',
         max: 200,
+        min: 1,
         initialValue: this._rectParams.scaleMax[0],
         onInput: this._genSliderListener('scale-x'),
       },
@@ -2014,17 +2063,26 @@ class RandomRectanglesScene extends Scene {
         label: 'Scale Y',
         id: 'scale-y-max',
         max: 100,
+        min: 1,
         initialValue: this._rectParams.scaleMax[1],
         onInput: this._genSliderListener('scale-y'),
       },
     ]
-
-    for (let i = 0; i < 50; i++)
-      this._rects.push(this._genRandomRect(this._rectParams))
   }
 
   setup(ui: SimpleUI): void {
     super.setup(ui)
+
+    for (let i = 0; i < this._instances; i++) {
+      const rect = this._genRandomRect(this._rectParams)
+
+      const mat = rect.transform.getMatrix([
+        this._ctx.canvasSize[0],
+        this._ctx.canvasSize[1],
+      ])
+      this._matrixBuffer.set(mat.buffer, i * 9)
+      this._colorBuffer.set(rect.color, i * 3)
+    }
 
     this._program.link()
 
@@ -2033,12 +2091,46 @@ class RandomRectanglesScene extends Scene {
 
     this._vao.addVertexBuffer(this._geometry.vertexData)
 
+    if (this._geometry.type === 'indexed')
+      this._vao.addElementsBuffer(this._geometry.indexData)
+
     this._vao.vbos.entries().forEach(([_, { ptr }]) => {
       this._program.setupAttribPointer(ptr)
     })
 
-    if (this._geometry.type === 'indexed')
-      this._vao.addElementsBuffer(this._geometry.indexData)
+    const clrPtr = this._vao.addVertexBuffer({
+      name: 'aColor',
+      size: 3,
+      hint: 'dynamic',
+      data: this._colorBuffer,
+    })
+
+    this._program.setupAttribPointer(clrPtr)
+    this._ctx.gl.vertexAttribDivisor(1, 1)
+
+    this._vao.addVertexBuffer({
+      name: 'aWorldProjection',
+      size: 0,
+      hint: 'dynamic',
+      data: this._matrixBuffer,
+    })
+
+    const bytesPerMatrix = 3 * 3 * 4
+    for (let i = 0; i < 3; ++i) {
+      const location = 2 + i
+      const offset = i * 3 * 4
+      this._ctx.gl.enableVertexAttribArray(location)
+      this._ctx.gl.vertexAttribPointer(
+        location,
+        3,
+        this._ctx.gl.FLOAT,
+        false,
+        bytesPerMatrix,
+        offset,
+      )
+
+      this._ctx.gl.vertexAttribDivisor(location, 1)
+    }
   }
 
   update(): void {}
@@ -2049,31 +2141,19 @@ class RandomRectanglesScene extends Scene {
     this._program.use()
     this._vao.bind()
 
-    this._rects.forEach((rect) => {
-      let { width, height } = this._ctx.gl.canvas
-
-      this._program.setUniform(
-        'uModelProjection',
-        rect.transform.getMatrix([width, height]),
-      )
-
-      this._program.setUniform(
-        'uColor',
-        rect.color[0],
-        rect.color[1],
-        rect.color[2],
-      )
-
-      this._ctx.draw(this._vao, this._geometry)
-    })
+    this._ctx.gl.drawElementsInstanced(
+      this._ctx.gl.TRIANGLES,
+      this._geometry.elements,
+      this._vao.eboType()!,
+      0,
+      this._instances,
+    )
   }
 
   private _genSliderListener(
     forInput: 'x' | 'y' | 'scale-x' | 'scale-y',
   ): (val: string) => any {
     return (value) => {
-      this._rects = []
-
       switch (forInput) {
         case 'x':
           this._rectParams.xMax = Number.parseFloat(value)
@@ -2089,8 +2169,17 @@ class RandomRectanglesScene extends Scene {
           break
       }
 
-      for (let i = 0; i < 50; i++)
-        this._rects.push(this._genRandomRect(this._rectParams))
+      for (let i = 0; i < this._instances; i++) {
+        const rect = this._genRandomRect(this._rectParams)
+
+        const mat = rect.transform.getMatrix([
+          this._ctx.canvasSize[0],
+          this._ctx.canvasSize[1],
+        ])
+        this._matrixBuffer.set(mat.buffer, i * 9)
+      }
+
+      this._vao.updateVertexBuffer('aWorldProjection', this._matrixBuffer)
     }
   }
 
@@ -2099,7 +2188,7 @@ class RandomRectanglesScene extends Scene {
     yMax,
     scaleMax: [sx, sy],
   }: RectangleGenParams): Rectangle => {
-    const rng = (range: number) => Math.floor(Math.random() * range)
+    const rng = (range: number) => Math.ceil(Math.random() * range)
     const x = rng(xMax)
     const y = rng(yMax)
     const w = rng(sx)

@@ -65,6 +65,34 @@
         }
     </script>
 
+    <script id="2d-instanced-vert" type="x-vert-shader">
+        #version 300 es
+
+        layout (location = 0) in vec2 aPosition;
+        layout (location = 1) in vec3 aColor;
+        layout (location = 2) in mat3 aWorldProjection;
+
+        out vec3 uColor;
+
+        void main() {
+            gl_Position = vec4((aWorldProjection * vec3(aPosition, 1)).xy, 0, 1);
+            uColor = aColor;
+        }
+    </script>
+    <script id="2d-instanced-frag" type="x-frag-shader">
+        #version 300 es
+
+        precision mediump float;
+
+        in vec3 uColor;
+
+        out vec4 FragColor;
+
+        void main() {
+            FragColor = vec4(uColor, 1);
+        }
+    </script>
+
     <script id="3d-default-vert" type="x-vert-shader">
         #version 300 es
 
