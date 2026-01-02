@@ -913,14 +913,17 @@ class Program extends RenderCtxObject {
     this._isLinked = true
   }
 
-  setupAttribPointer({
-    name,
-    size,
-    type,
-    normalized = false,
-    stride = 0,
-    offset = 0,
-  }: AttribPointer) {
+  setupAttribPointer(
+    {
+      name,
+      size,
+      type,
+      normalized = false,
+      stride = 0,
+      offset = 0,
+    }: AttribPointer,
+    divisor?: number,
+  ) {
     const location = this._attributes.get(name)
 
     type PtrLookup = {
@@ -945,6 +948,40 @@ class Program extends RenderCtxObject {
       stride,
       offset,
     )
+
+    if (divisor) this._ctx.vertexAttribDivisor(location, divisor)
+  }
+
+  setupMatrixAttribPointer(
+    {
+      name,
+      size,
+      normalized = false,
+    }: Omit<AttribPointer, 'type' | 'stride' | 'offset'>,
+    divisor?: number,
+  ) {
+    const location = this._attributes.get(name)
+
+    if (location === undefined)
+      throw new Error(`Attribute '${name}' is not defined in current program`)
+
+    const bytesPerFloat = 4
+    const bytesPerMatrix = size * size * bytesPerFloat
+    for (let i = 0; i < size; ++i) {
+      const l = location + i
+      const offset = i * size * bytesPerFloat
+      this._ctx.enableVertexAttribArray(l)
+      this._ctx.vertexAttribPointer(
+        l,
+        size,
+        this._ctx.FLOAT,
+        normalized,
+        bytesPerMatrix,
+        offset,
+      )
+
+      if (divisor) this._ctx.vertexAttribDivisor(l, divisor)
+    }
   }
 
   setUniform: SetUniform = (
@@ -2089,14 +2126,11 @@ class RandomRectanglesScene extends Scene {
     this._vao.bind()
     this._program.use()
 
-    this._vao.addVertexBuffer(this._geometry.vertexData)
+    const posPtr = this._vao.addVertexBuffer(this._geometry.vertexData)
+    this._program.setupAttribPointer(posPtr)
 
     if (this._geometry.type === 'indexed')
       this._vao.addElementsBuffer(this._geometry.indexData)
-
-    this._vao.vbos.entries().forEach(([_, { ptr }]) => {
-      this._program.setupAttribPointer(ptr)
-    })
 
     const clrPtr = this._vao.addVertexBuffer({
       name: 'aColor',
@@ -2105,32 +2139,16 @@ class RandomRectanglesScene extends Scene {
       data: this._colorBuffer,
     })
 
-    this._program.setupAttribPointer(clrPtr)
-    this._ctx.gl.vertexAttribDivisor(1, 1)
+    this._program.setupAttribPointer(clrPtr, 1)
 
-    this._vao.addVertexBuffer({
+    const wvpPtr = this._vao.addVertexBuffer({
       name: 'aWorldProjection',
-      size: 0,
+      size: 3,
       hint: 'dynamic',
       data: this._matrixBuffer,
     })
 
-    const bytesPerMatrix = 3 * 3 * 4
-    for (let i = 0; i < 3; ++i) {
-      const location = 2 + i
-      const offset = i * 3 * 4
-      this._ctx.gl.enableVertexAttribArray(location)
-      this._ctx.gl.vertexAttribPointer(
-        location,
-        3,
-        this._ctx.gl.FLOAT,
-        false,
-        bytesPerMatrix,
-        offset,
-      )
-
-      this._ctx.gl.vertexAttribDivisor(location, 1)
-    }
+    this._program.setupMatrixAttribPointer(wvpPtr, 1)
   }
 
   update(): void {}
