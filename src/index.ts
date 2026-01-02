@@ -1737,6 +1737,7 @@ interface UIComponentGroup {
   id: string
   legend: string
   components: UIComponent[]
+  persist?: boolean
 }
 
 type UIComponent =
@@ -1748,7 +1749,6 @@ type UIComponent =
 
 class SimpleUI {
   protected _root: HTMLElement
-  protected _persisting: Set<string>
 
   constructor(rootId: string) {
     const root = document.getElementById(rootId)
@@ -1757,7 +1757,6 @@ class SimpleUI {
       throw new Error(`Couldn't find mount point for UI with '${rootId}' id`)
 
     this._root = root
-    this._persisting = new Set()
   }
 
   mount(component: UIComponent | UIComponent[]) {
@@ -1777,13 +1776,9 @@ class SimpleUI {
   }
 
   clear() {
-    const purgeList: ChildNode[] = []
-
-    this._root.childNodes.forEach((child) => {
-      if (!this._persisting.has((child as HTMLElement).id)) {
-        purgeList.push(child)
-      }
-    })
+    const purgeList = this._root.querySelectorAll(
+      '#ui-controls > *:not(.persist)',
+    )
 
     purgeList.forEach((child) => this._root.removeChild(child))
   }
@@ -1820,7 +1815,12 @@ class SimpleUI {
     }
   }
 
-  private _createGroup({ id, legend, components }: UIComponentGroup) {
+  private _createGroup({
+    id,
+    legend,
+    components,
+    persist = false,
+  }: UIComponentGroup) {
     const $fieldset = document.createElement('fieldset')
     const $legend = document.createElement('legend')
 
@@ -1830,6 +1830,8 @@ class SimpleUI {
     $fieldset.appendChild($legend)
 
     for (const component of components) this._mountOn($fieldset, component)
+
+    if (persist) $fieldset.classList.add('persist')
 
     return $fieldset
   }
@@ -1841,14 +1843,14 @@ class SimpleUI {
     options,
     onInput,
   }: DropdownOptions): [HTMLLabelElement, HTMLSelectElement] {
-    const select = document.createElement('select')
-    const label = document.createElement('label')
+    const $select = document.createElement('select')
+    const $label = document.createElement('label')
 
-    select.name = name
-    select.id = name
-    select.title = displayName || name
+    $select.name = name
+    $select.id = name
+    $select.title = displayName || name
 
-    select.addEventListener('input', (e) =>
+    $select.addEventListener('input', (e) =>
       onInput((e.target as HTMLInputElement).value, this),
     )
 
@@ -1856,19 +1858,19 @@ class SimpleUI {
       const option = document.createElement('option')
       option.value = opt.value
       option.textContent = opt.name
-      select.appendChild(option)
+      $select.appendChild(option)
     })
 
-    label.id = `${name}-label`
-    label.htmlFor = name
-    label.innerText = displayName || name
+    $label.id = `${name}-label`
+    $label.htmlFor = name
+    $label.innerText = displayName || name
 
     if (persist) {
-      this._persisting.add(select.id)
-      this._persisting.add(label.id)
+      $select.classList.add('persist')
+      $label.classList.add('persist')
     }
 
-    return [label, select]
+    return [$label, $select]
   }
 
   private _createSlider({
@@ -1901,8 +1903,8 @@ class SimpleUI {
     $label.innerText = label
 
     if (persist) {
-      this._persisting.add($input.id)
-      this._persisting.add($label.id)
+      $input.classList.add('persist')
+      $label.classList.add('persist')
     }
 
     return [$label, $input]
@@ -1936,8 +1938,8 @@ class SimpleUI {
     div.appendChild($label)
 
     if (persist) {
-      this._persisting.add($input.id)
-      this._persisting.add($label.id)
+      $input.classList.add('persist')
+      $label.classList.add('persist')
     }
 
     return div
@@ -1951,28 +1953,28 @@ class SimpleUI {
     onInput,
   }: Checkbox): HTMLDivElement {
     const div = document.createElement('div')
-    const { input, label } = this._createLabeledInput()
+    const { input: $input, label: $label } = this._createLabeledInput()
 
     div.id = name
 
-    input.type = 'checkbox'
-    input.name = name
-    input.id = `${name}-input`
-    input.title = name
-    input.checked = checked
-    input.addEventListener('click', (e) => {
+    $input.type = 'checkbox'
+    $input.name = name
+    $input.id = `${name}-input`
+    $input.title = name
+    $input.checked = checked
+    $input.addEventListener('click', (e) => {
       onInput((e.target as HTMLInputElement).checked.toString(), this)
     })
 
-    label.id = `${name}-label`
-    label.htmlFor = name
-    label.innerText = displayName || name
+    $label.id = `${name}-label`
+    $label.htmlFor = name
+    $label.innerText = displayName || name
 
-    div.appendChild(input)
-    div.appendChild(label)
+    div.appendChild($input)
+    div.appendChild($label)
 
     if (persist) {
-      this._persisting.add(div.id)
+      div.classList.add('persist')
     }
 
     return div
@@ -2090,7 +2092,7 @@ class RandomRectanglesScene extends Scene {
         type: 'slider',
         label: 'Scale X',
         id: 'scale-x-max',
-        max: 200,
+        max: 5,
         min: 1,
         initialValue: this._rectParams.scaleMax[0],
         onInput: this._genSliderListener('scale-x'),
@@ -2099,7 +2101,7 @@ class RandomRectanglesScene extends Scene {
         type: 'slider',
         label: 'Scale Y',
         id: 'scale-y-max',
-        max: 100,
+        max: 5,
         min: 1,
         initialValue: this._rectParams.scaleMax[1],
         onInput: this._genSliderListener('scale-y'),
