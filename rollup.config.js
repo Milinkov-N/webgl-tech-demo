@@ -17,7 +17,7 @@ export default {
     copy({
       targets: [
         {
-          src: 'public/**/*',
+          src: 'public/*',
           dest: 'dist',
         },
       ],

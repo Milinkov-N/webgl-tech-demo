@@ -1315,6 +1315,122 @@ class RenderContext {
   }
 }
 
+class WavObj {
+  static parse(input: string): GeometryData {
+    let uniqueVertices: Map<string, number> = new Map()
+    let vertices: number[][] = []
+    let texcoords: number[][] = []
+    let normals: number[][] = []
+    let elements: number[] = []
+
+    const completeData: {
+      vertices: number[]
+      texcoords: number[]
+      normals: number[]
+    } = {
+      vertices: [],
+      texcoords: [],
+      normals: [],
+    }
+
+    input.split('\n').forEach((line, idx) => {
+      line = line.trim()
+
+      const map = new Map<string, (payload: string[]) => void>([
+        ['v', WavObj._vxParser(vertices)],
+        ['vt', WavObj._vxParser(texcoords)],
+        ['vn', WavObj._vxParser(normals)],
+        [
+          'f',
+          (p: string[]) => {
+            p.forEach((facet) => {
+              const components = facet.split('/')
+
+              if (components.length <= 0 || components.length > 3)
+                throw new Error(
+                  `Failed parsing .obj file: unexpected 'f' keyword value at line ${idx}`,
+                )
+
+              const v = Number.parseInt(components[0]!) - 1
+              const vt = Number.parseInt(components[1]!) - 1
+              const vn = Number.parseInt(components[2]!) - 1
+
+              if (!uniqueVertices.has(facet)) {
+                const vIdx = WavObj._relativeIndexing(v, vertices.length)
+                const vtIdx = WavObj._relativeIndexing(vt, texcoords.length)
+                const vnIdx = WavObj._relativeIndexing(vn, normals.length)
+
+                completeData.vertices.push(...vertices[vIdx]!)
+
+                if (texcoords.length != 0)
+                  completeData.texcoords.push(...texcoords[vtIdx]!)
+
+                if (normals.length != 0)
+                  completeData.normals.push(...normals[vnIdx]!)
+
+                uniqueVertices.set(facet, uniqueVertices.size)
+              }
+
+              elements.push(uniqueVertices.get(facet)!)
+            })
+          },
+        ],
+      ])
+
+      if (line === '' || line.startsWith('#')) return
+
+      const [keyword, ...payload] = line.split(/\s+/)
+
+      // we checked for empty string earlier
+      let handler = map.get(keyword!)
+
+      handler
+        ? handler(payload)
+        : console.warn(
+            `unhandled keyword: '${keyword}' at line ${idx + 1}`,
+            'payload:',
+            payload,
+          )
+    })
+
+    const geo: GeometryData = {
+      type: 'indexed',
+      mode: 'tris',
+      elements: elements.length,
+      vertexData: {
+        name: 'aPosition',
+        size: 3,
+        data: new Float32Array(completeData.vertices),
+      },
+      indexData: new Uint8Array(elements),
+    }
+
+    if (completeData.normals.length != 0) {
+      geo.colorData = {
+        name: 'aColor',
+        size: 3,
+        data: new Float32Array(completeData.normals),
+      }
+    }
+
+    return geo
+  }
+
+  private static _vxParser(output: number[][]) {
+    return (p: string[]) => {
+      output.push(new Array(p.length))
+
+      p.map((v, i) => {
+        output[output.length - 1]![i] = Number.parseFloat(v)
+      })
+    }
+  }
+
+  private static _relativeIndexing(idx: number, currIdx: number): number {
+    return idx < 0 ? currIdx + idx : idx
+  }
+}
+
 interface GeometryDataBase {
   mode: 'tris' | 'lines'
   elements: number
@@ -1409,7 +1525,7 @@ class Geometry {
     }
   }
 
-  static Box(): GeometryData {
+  static box(): GeometryData {
     return {
       type: 'basic',
       mode: 'tris',
@@ -2539,7 +2655,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
   private _gridGeometry: GeometryData
   private _gridProgram: Program
 
-  constructor(ctx: RenderContext) {
+  constructor(ctx: RenderContext, cube: GeometryData) {
     super(ctx, {
       sceneName: '3D F Letter',
       program: ctx.createProgram('3d-lighting'),
@@ -2551,7 +2667,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
 
     this._boxProgram = ctx.createProgram('3d-default')
     this._boxVao = ctx.createVertexArray()
-    this._boxGeometry = Geometry.Box()
+    this._boxGeometry = cube
     this._boxTransform = new Transform3D()
 
     this._boxTransform.scale(10, 10, 10)
@@ -2578,6 +2694,11 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
     this._boxVao.bind()
     const vertexPtr = this._boxVao.addVertexBuffer(this._boxGeometry.vertexData)
     this._boxProgram.setupAttribPointer(vertexPtr)
+
+    if (this._boxGeometry.type === 'indexed') {
+      this._boxVao.addElementsBuffer(this._boxGeometry.indexData)
+    }
+
     if (this._boxGeometry.colorData) {
       const clrPtr = this._boxVao.addVertexBuffer(this._boxGeometry.colorData)
       this._boxProgram.setupAttribPointer(clrPtr)
@@ -2951,6 +3072,11 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
   }
 }
 
+console.info(`fetching 'models/cube.obj'`)
+
+const cubeResponse = await fetch('models/cube.obj')
+const cube = WavObj.parse(await cubeResponse.text())
+
 try {
   const canvasId = 'wgl2'
   const canvas = document.getElementById(canvasId) as HTMLCanvasElement
@@ -3018,7 +3144,7 @@ try {
   let sceneIdx = 0
   const scenes: Scene[] = [
     new CircledFLetter3DScene(ctx) as Scene,
-    new SingleFLetter3DScene(ctx) as Scene,
+    new SingleFLetter3DScene(ctx, cube) as Scene,
     new FlatFLetterScene(ctx) as Scene,
     new RandomRectanglesScene(ctx) as Scene,
   ]
