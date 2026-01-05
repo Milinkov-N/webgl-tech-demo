@@ -1315,66 +1315,54 @@ class RenderContext {
   }
 }
 
-class WavObj {
-  static parse(input: string): GeometryData {
-    let uniqueVertices: Map<string, number> = new Map()
-    let vertices: number[][] = []
-    let texcoords: number[][] = []
-    let normals: number[][] = []
-    let elements: number[] = []
+interface WavObjData {
+  vertices: number[]
+  texcoords: number[]
+  normals: number[]
+  colors: number[]
+  elements: number[]
+}
 
-    const completeData: {
-      vertices: number[]
-      texcoords: number[]
-      normals: number[]
-    } = {
+interface WavObjBuffers {
+  vertices: number[][]
+  texcoords: number[][]
+  normals: number[][]
+  elements: number[]
+  vnElements: number[]
+}
+
+interface WavObjParseOptions {
+  randomizeFaceColor: boolean
+}
+
+class WavObj {
+  static parse(input: string, opts?: WavObjParseOptions): WavObjData {
+    let uniqueVertices: Map<string, number> = new Map()
+
+    const buffers: WavObjBuffers = {
       vertices: [],
       texcoords: [],
       normals: [],
+      elements: [],
+      vnElements: [],
+    }
+
+    const data: WavObjData = {
+      vertices: [],
+      texcoords: [],
+      normals: [],
+      colors: [],
+      elements: [],
     }
 
     input.split('\n').forEach((line, idx) => {
       line = line.trim()
 
       const map = new Map<string, (payload: string[]) => void>([
-        ['v', WavObj._vxParser(vertices)],
-        ['vt', WavObj._vxParser(texcoords)],
-        ['vn', WavObj._vxParser(normals)],
-        [
-          'f',
-          (p: string[]) => {
-            p.forEach((facet) => {
-              const components = facet.split('/')
-
-              if (components.length <= 0 || components.length > 3)
-                throw new Error(
-                  `Failed parsing .obj file: unexpected 'f' keyword value at line ${idx}`,
-                )
-
-              const v = Number.parseInt(components[0]!) - 1
-              const vt = Number.parseInt(components[1]!) - 1
-              const vn = Number.parseInt(components[2]!) - 1
-
-              if (!uniqueVertices.has(facet)) {
-                const vIdx = WavObj._relativeIndexing(v, vertices.length)
-                const vtIdx = WavObj._relativeIndexing(vt, texcoords.length)
-                const vnIdx = WavObj._relativeIndexing(vn, normals.length)
-
-                completeData.vertices.push(...vertices[vIdx]!)
-
-                if (texcoords.length != 0)
-                  completeData.texcoords.push(...texcoords[vtIdx]!)
-
-                if (normals.length != 0)
-                  completeData.normals.push(...normals[vnIdx]!)
-
-                uniqueVertices.set(facet, uniqueVertices.size)
-              }
-
-              elements.push(uniqueVertices.get(facet)!)
-            })
-          },
-        ],
+        ['v', WavObj._vxParser(buffers.vertices)],
+        ['vt', WavObj._vxParser(buffers.texcoords)],
+        ['vn', WavObj._vxParser(buffers.normals)],
+        ['f', WavObj._facetParser(uniqueVertices, buffers, data, idx)],
       ])
 
       if (line === '' || line.startsWith('#')) return
@@ -1393,27 +1381,31 @@ class WavObj {
           )
     })
 
-    const geo: GeometryData = {
-      type: 'indexed',
-      mode: 'tris',
-      elements: elements.length,
-      vertexData: {
-        name: 'aPosition',
-        size: 3,
-        data: new Float32Array(completeData.vertices),
-      },
-      indexData: new Uint8Array(elements),
-    }
+    if (opts?.randomizeFaceColor) {
+      const maxVnIdx =
+        buffers.vnElements?.reduce((prev, curr) =>
+          curr > prev ? curr : prev,
+        ) || 0
+      const colors = []
+      const colorTint: Num3 = [Math.random(), Math.random(), Math.random()]
 
-    if (completeData.normals.length != 0) {
-      geo.colorData = {
-        name: 'aColor',
-        size: 3,
-        data: new Float32Array(completeData.normals),
+      for (let i = 0; i < maxVnIdx; i++)
+        colors.push(Math.max(Math.random(), 0.5))
+
+      for (const idx of buffers.vnElements!) {
+        const color = colors[idx]!
+        data.colors.push(
+          color * colorTint[0],
+          color * colorTint[1],
+          color * colorTint[2],
+        )
       }
     }
 
-    return geo
+    return {
+      ...data,
+      elements: buffers.elements,
+    }
   }
 
   private static _vxParser(output: number[][]) {
@@ -1422,6 +1414,58 @@ class WavObj {
 
       p.map((v, i) => {
         output[output.length - 1]![i] = Number.parseFloat(v)
+      })
+    }
+  }
+
+  private static _facetParser(
+    output: Map<string, number>,
+    buffers: WavObjBuffers,
+    data: WavObjData,
+    idx: number,
+  ) {
+    return (p: string[]) => {
+      p.forEach((facet) => {
+        const components = facet.split('/')
+
+        if (components.length <= 0 || components.length > 3)
+          throw new Error(
+            `Failed parsing .obj file: unexpected 'f' keyword value at line ${idx}`,
+          )
+
+        const v = Number.parseInt(components[0]!) - 1
+        const vt = Number.parseInt(components[1]!) - 1
+        const vn = Number.parseInt(components[2]!) - 1
+
+        if (!output.has(facet)) {
+          const vIdx = WavObj._relativeIndexing(v, buffers.vertices.length)
+          const vtIdx = WavObj._relativeIndexing(vt, buffers.texcoords.length)
+          const vnIdx = WavObj._relativeIndexing(vn, buffers.normals.length)
+
+          buffers.vnElements.push(vnIdx)
+
+          const vertex = buffers.vertices[vIdx]
+
+          if (vertex && vertex.length === 6) {
+            data.vertices.push(...vertex.slice(0, 3))
+            data.colors?.push(...vertex.slice(3))
+          } else if (vertex?.length === 3) {
+            data.vertices.push(...vertex)
+          } else {
+            throw new Error(
+              'Failed to parse .obj file: unsupported vertex format',
+            )
+          }
+
+          if (buffers.texcoords)
+            data.texcoords.push(...buffers.texcoords[vtIdx]!)
+
+          if (buffers.normals) data.normals.push(...buffers.normals[vnIdx]!)
+
+          output.set(facet, output.size)
+        }
+
+        buffers.elements.push(output.get(facet)!)
       })
     }
   }
@@ -1450,7 +1494,57 @@ interface GeometryDataIndexed extends GeometryDataBase {
 
 type GeometryData = GeometryDataBasic | GeometryDataIndexed
 
+interface GeometryObjOptions {
+  include: {
+    normals: boolean
+    colors: boolean
+  }
+  debugNormals?: boolean
+}
+
+const WavObjDefaultOptions: GeometryObjOptions = {
+  include: {
+    normals: false,
+    colors: true,
+  },
+  debugNormals: false,
+} as const
+
 class Geometry {
+  static fromObj(
+    obj: WavObjData,
+    opts: GeometryObjOptions = WavObjDefaultOptions,
+  ): GeometryData {
+    const geo: GeometryData = {
+      type: 'indexed',
+      mode: 'tris',
+      elements: obj.elements.length,
+      vertexData: {
+        name: 'aPosition',
+        size: 3,
+        data: new Float32Array(obj.vertices),
+      },
+      indexData: new Uint16Array(obj.elements),
+    }
+
+    if (opts.include.normals && obj.normals.length != 0) {
+      geo.colorData = {
+        name: 'aNormal',
+        size: 3,
+        data: new Float32Array(obj.normals),
+      }
+    }
+
+    if (opts.debugNormals || (opts.include.colors && obj.colors?.length != 0)) {
+      geo.colorData = {
+        name: 'aColor',
+        size: 3,
+        data: new Float32Array(opts.debugNormals ? obj.normals : obj.colors),
+      }
+    }
+
+    return geo
+  }
   static plane(): GeometryData {
     return {
       type: 'indexed',
@@ -2655,7 +2749,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
   private _gridGeometry: GeometryData
   private _gridProgram: Program
 
-  constructor(ctx: RenderContext, cube: GeometryData) {
+  constructor(ctx: RenderContext) {
     super(ctx, {
       sceneName: '3D F Letter',
       program: ctx.createProgram('3d-lighting'),
@@ -2667,7 +2761,7 @@ class SingleFLetter3DScene extends FLetter3DSceneBase {
 
     this._boxProgram = ctx.createProgram('3d-default')
     this._boxVao = ctx.createVertexArray()
-    this._boxGeometry = cube
+    this._boxGeometry = Geometry.box()
     this._boxTransform = new Transform3D()
 
     this._boxTransform.scale(10, 10, 10)
@@ -3072,11 +3166,6 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
   }
 }
 
-console.info(`fetching 'models/cube.obj'`)
-
-const cubeResponse = await fetch('models/cube.obj')
-const cube = WavObj.parse(await cubeResponse.text())
-
 try {
   const canvasId = 'wgl2'
   const canvas = document.getElementById(canvasId) as HTMLCanvasElement
@@ -3144,7 +3233,7 @@ try {
   let sceneIdx = 0
   const scenes: Scene[] = [
     new CircledFLetter3DScene(ctx) as Scene,
-    new SingleFLetter3DScene(ctx, cube) as Scene,
+    new SingleFLetter3DScene(ctx) as Scene,
     new FlatFLetterScene(ctx) as Scene,
     new RandomRectanglesScene(ctx) as Scene,
   ]
