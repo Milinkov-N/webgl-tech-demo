@@ -20,6 +20,16 @@ class MathUtils {
   static degreesToRadians(deg: number): number {
     return (deg * Math.PI) / 180
   }
+
+  static rng(range: number) {
+    return Math.ceil(Math.random() * range)
+  }
+
+  static rng2(min: number, max: number) {
+    min = Math.ceil(min)
+    max = Math.floor(max)
+    return Math.floor(Math.random() * (max - min + 1)) + min
+  }
 }
 
 class Vec3 {
@@ -935,8 +945,10 @@ class Program extends RenderCtxObject {
       ubyte: this._ctx.UNSIGNED_BYTE,
     }
 
-    if (location === undefined)
-      throw new Error(`Attribute '${name}' is not defined in current program`)
+    if (location === undefined) {
+      console.warn(`Attribute '${name}' is not defined in current program`)
+      return
+    }
 
     this._ctx.enableVertexAttribArray(location)
 
@@ -1457,10 +1469,11 @@ class WavObj {
             )
           }
 
-          if (buffers.texcoords)
+          if (buffers.texcoords.length !== 0)
             data.texcoords.push(...buffers.texcoords[vtIdx]!)
 
-          if (buffers.normals) data.normals.push(...buffers.normals[vnIdx]!)
+          if (buffers.normals.length !== 0)
+            data.normals.push(...buffers.normals[vnIdx]!)
 
           output.set(facet, output.size)
         }
@@ -1712,6 +1725,30 @@ class Geometry {
         ]),
       },
     }
+  }
+
+  static cone(): GeometryData {
+    const $obj = document.querySelector('#cone')
+
+    if (!$obj) throw new Error('Failed to locate #cone asset')
+
+    const objdata = WavObj.parse($obj?.textContent, {
+      randomizeFaceColor: true,
+    })
+
+    return Geometry.fromObj(objdata)
+  }
+
+  static uvsphere(): GeometryData {
+    const $obj = document.querySelector('#uv-sphere')
+
+    if (!$obj) throw new Error('Failed to locate #uv-sphere asset')
+
+    const objdata = WavObj.parse($obj?.textContent, {
+      randomizeFaceColor: true,
+    })
+
+    return Geometry.fromObj(objdata)
   }
 
   static FLetter3D(): GeometryData {
@@ -2228,7 +2265,7 @@ abstract class Scene {
     ui.clear()
   }
 
-  abstract update(e: Event): void
+  abstract update(e: Event, dt: number): void
 
   render(dt: number): void {
     this._ctx.gl.viewport(
@@ -2418,11 +2455,10 @@ class RandomRectanglesScene extends Scene {
     yMax,
     scaleMax: [sx, sy],
   }: RectangleGenParams): Rectangle => {
-    const rng = (range: number) => Math.ceil(Math.random() * range)
-    const x = rng(xMax)
-    const y = rng(yMax)
-    const w = rng(sx)
-    const h = rng(sy)
+    const x = MathUtils.rng(xMax)
+    const y = MathUtils.rng(yMax)
+    const w = MathUtils.rng(sx)
+    const h = MathUtils.rng(sy)
 
     const t = new Transform2D()
 
@@ -3166,6 +3202,178 @@ class CircledFLetter3DScene extends FLetter3DSceneBase {
   }
 }
 
+interface MeshOptions {
+  geometry: GeometryData
+  program: Program
+  transforms?: {
+    translation?: Num3
+    rotation?: Num3
+    scale?: Num3
+  }
+  animations?: TransformAnimation[]
+}
+
+class Mesh {
+  private _geometry: GeometryData
+  private _program: Program
+  private _vao: VertexArray
+  private _transform: Transform3D
+  private _animations: Transform3DAnimator | undefined
+
+  constructor(
+    ctx: RenderContext,
+    {
+      geometry,
+      program,
+      transforms: { translation, rotation, scale } = {},
+      animations,
+    }: MeshOptions,
+  ) {
+    this._geometry = geometry
+    this._program = program
+    this._vao = ctx.createVertexArray()
+
+    this._transform = new Transform3D()
+    const [tx, ty, tz] = translation || [0, 0, 0]
+    this._transform.translation(tx, ty, tz)
+    const [rx, ry, rz] = rotation || [0, 0, 0]
+    this._transform.rotation(rx, ry, rz)
+    const [sx, sy, sz] = scale || [1, 1, 1]
+    this._transform.rotation(sx, sy, sz)
+
+    if (animations) {
+      this._animations = new Transform3DAnimator(this._transform)
+
+      for (const animation of animations)
+        this._animations.addAnimation(animation)
+    }
+  }
+
+  setup() {
+    this._program.use()
+
+    this._vao.bind()
+
+    const vPtr = this._vao.addVertexBuffer(this._geometry.vertexData)
+    this._program.setupAttribPointer(vPtr)
+
+    if (this._geometry.colorData) {
+      const clrPtr = this._vao.addVertexBuffer(this._geometry.colorData)
+      this._program.setupAttribPointer(clrPtr)
+    }
+
+    if (this._geometry.normalData) {
+      const normalPtr = this._vao.addVertexBuffer(this._geometry.normalData)
+      this._program.setupAttribPointer(normalPtr)
+    }
+
+    if (this._geometry.type === 'indexed')
+      this._vao.addElementsBuffer(this._geometry.indexData)
+  }
+
+  update(dt: number) {
+    if (this._animations) this._animations.animate(dt)
+  }
+
+  render(ctx: RenderContext, projection: Matrix4) {
+    this._program.use()
+    this._vao.bind()
+
+    this._program.setUniform(
+      'uModelProjection',
+      projection.multiply(this._transform.worldMatrix()),
+    )
+
+    ctx.draw(this._vao, this._geometry)
+  }
+}
+
+class MultipleThingsScene extends Scene {
+  private _program: Program
+
+  private _camera: Matrix4
+  private _view: Matrix4
+
+  private _meshes: Mesh[]
+
+  constructor(ctx: RenderContext) {
+    super(ctx, 'Multiple Things', [1, 1, 1])
+
+    this._program = this._ctx.createProgram('3d-default')
+
+    this._camera = Matrix4.perspective({
+      fov: 75,
+      aspect: this._ctx.canvasSize[0] / this._ctx.canvasSize[1],
+      near: 1,
+      far: 2000,
+    })
+
+    this._view = Matrix4.lookAt(
+      new Vec3([0, 0, 40]),
+      new Vec3([0, 0, 0]),
+      new Vec3([0, 1, 0]),
+    ).inverse()
+
+    const geometries = [Geometry.uvsphere(), Geometry.cone(), Geometry.box()]
+
+    this._meshes = []
+
+    for (let i = 0; i < 500; i++) {
+      const geoIdx = Math.floor(Math.random() * 3)
+      const animationRxDir = Math.sign(Math.random() - 0.5)
+      const animationRyDir = Math.sign(Math.random() - 0.5)
+
+      const translation: Num3 = [
+        MathUtils.rng2(-30, 30),
+        MathUtils.rng2(-20, 20),
+        MathUtils.rng2(-20, 20),
+      ]
+
+      this._meshes.push(
+        new Mesh(this._ctx, {
+          geometry: geometries[geoIdx]!,
+          program: this._program,
+          transforms: {
+            translation,
+          },
+          animations: [
+            {
+              enabled: true,
+              key: 'rx',
+              func: 'constant',
+              speed: animationRxDir / 2,
+            },
+            {
+              enabled: true,
+              key: 'ry',
+              func: 'constant',
+              speed: animationRyDir / 2,
+            },
+          ],
+        }),
+      )
+    }
+  }
+
+  override setup(ui: SimpleUI): void {
+    super.setup(ui)
+
+    this._program.link()
+    for (const mesh of this._meshes) mesh.setup()
+  }
+
+  update(_: Event, dt: number): void {
+    for (const mesh of this._meshes) mesh.update(dt)
+  }
+
+  override render(dt: number): void {
+    super.render(dt)
+
+    for (const mesh of this._meshes)
+      mesh.render(this._ctx, this._camera.multiply(this._view))
+  }
+}
+
 try {
   const canvasId = 'wgl2'
   const canvas = document.getElementById(canvasId) as HTMLCanvasElement
@@ -3234,6 +3442,7 @@ try {
   const scenes: Scene[] = [
     new CircledFLetter3DScene(ctx) as Scene,
     new SingleFLetter3DScene(ctx) as Scene,
+    new MultipleThingsScene(ctx) as Scene,
     new FlatFLetterScene(ctx) as Scene,
     new RandomRectanglesScene(ctx) as Scene,
   ]
@@ -3259,12 +3468,15 @@ try {
   let then = 0
   function draw(now: number) {
     ctx.resizeCanvas()
-
-    scenes[sceneIdx]?.update({
-      mouse: { initialGrab, grabbed, movementX, movementY },
-    })
-
     now *= 0.001
+
+    scenes[sceneIdx]?.update(
+      {
+        mouse: { initialGrab, grabbed, movementX, movementY },
+      },
+      now - then,
+    )
+
     scenes[sceneIdx]?.render(now - then)
 
     then = now
